@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
-import { agregarSala, editarSala, eliminarSala, Sala } from '../redux/slices/salasSlice';
+import { obtenerSalas, Sala } from '../redux/slices/salasSlice';
+import { crearSala, editarSala as editarSalaApi, borrarSala } from '../services/salas';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function SalasScreen() {
   const salas = useSelector((state: RootState) => state.salas.salas);
   const dispatch = useDispatch();
+  const [guardando,setGuardando] = useState(false);
+  const refrescar = useCallback(() => { void (dispatch as any)(obtenerSalas()); }, [dispatch]);
+  useFocusEffect(refrescar);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [modoEdicion, setModoEdicion] = useState(false);
@@ -30,42 +35,35 @@ export default function SalasScreen() {
     setModalVisible(true);
   };
 
-  const confirmarEliminacion = (nombre: string) => {
-    Alert.alert('Confirmar', `¿Estás seguro de borrar la ${nombre}?`, [
+  const confirmarEliminacion = (sala: Sala) => {
+    Alert.alert('Confirmar', `¿Borrar ${sala.nombre}? Solo será posible si no tiene funciones ni ventas.`, [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: () => dispatch(eliminarSala(nombre)) }
+      { text: 'Eliminar', style: 'destructive', onPress: async () => {
+        if (!sala.id) return Alert.alert('Error','Sala sin identificador de Railway');
+        try { await borrarSala(sala.id); await (dispatch as any)(obtenerSalas()); }
+        catch(e) { Alert.alert('No se pudo eliminar',e instanceof Error?e.message:'Error del servidor'); }
+      }}
     ]);
   };
 
-  const guardarSala = () => {
-    const filasInt = parseInt(cantidadFilas);
-    
-    if (!nombreSala.trim() || isNaN(filasInt) || filasInt <= 0 || filasInt > 20) {
-      Alert.alert('Error', 'Ingresa un nombre válido y una cantidad de filas entre 1 y 20.');
-      return;
+  const guardarSala = async () => {
+    if(guardando)return;
+    const filasInt = Number(cantidadFilas);
+    if (!nombreSala.trim() || !Number.isInteger(filasInt) || filasInt < 1 || filasInt > 20) {
+      Alert.alert('Error', 'Ingresa un nombre válido y una cantidad de filas entre 1 y 20.');return;
     }
-
-    const nombreLimpio = nombreSala.trim().toUpperCase();
-
-    if (modoEdicion) {
-      if (nombreLimpio !== nombreOriginal) {
-        const existe = salas.find(s => s.nombre === nombreLimpio);
-        if (existe) {
-          Alert.alert('Error', 'Ya existe otra sala con ese nombre.');
-          return;
-        }
-      }
-      dispatch(editarSala({ nombreOriginal, nombreNuevo: nombreLimpio, filas: filasInt }));
-    } else {
-      const existe = salas.find(s => s.nombre === nombreLimpio);
-      if (existe) {
-        Alert.alert('Error', 'Ya existe una sala con ese nombre.');
-        return;
-      }
-      dispatch(agregarSala({ nombre: nombreLimpio, filas: filasInt }));
-    }
-
-    setModalVisible(false);
+    const nombreLimpio=nombreSala.trim().toUpperCase();
+    const original=salas.find(s=>s.nombre===nombreOriginal);
+    setGuardando(true);
+    try {
+      if(modoEdicion) {
+        if(!original?.id)throw new Error('Sala no sincronizada con Railway');
+        await editarSalaApi(original.id,{nombre:nombreLimpio,filas:filasInt});
+      } else { await crearSala({nombre:nombreLimpio,filas:filasInt}); }
+      await (dispatch as any)(obtenerSalas());
+      setModalVisible(false);
+    }catch(e){Alert.alert('No se pudo guardar',e instanceof Error?e.message:'Error del servidor');}
+    finally{setGuardando(false);}
   };
 
   const renderItem = ({ item }: { item: Sala }) => (
@@ -78,7 +76,7 @@ export default function SalasScreen() {
         <TouchableOpacity style={styles.botonEditar} onPress={() => abrirModalEditar(item)}>
           <Text style={styles.textoAccion}>EDITAR</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.botonEliminar} onPress={() => confirmarEliminacion(item.nombre)}>
+        <TouchableOpacity style={styles.botonEliminar} onPress={() => confirmarEliminacion(item)}>
           <Text style={styles.textoAccion}>BORRAR</Text>
         </TouchableOpacity>
       </View>
@@ -117,7 +115,7 @@ export default function SalasScreen() {
               <TouchableOpacity style={styles.botonCancelar} onPress={() => setModalVisible(false)}>
                 <Text style={styles.textoBotonCancelar}>CANCELAR</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.botonGuardar} onPress={guardarSala}>
+              <TouchableOpacity style={styles.botonGuardar} onPress={guardarSala} disabled={guardando}>
                 <Text style={styles.textoBotonGuardar}>GUARDAR</Text>
               </TouchableOpacity>
             </View>

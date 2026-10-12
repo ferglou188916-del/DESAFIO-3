@@ -1,11 +1,15 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { useFocusEffect } from '@react-navigation/native';
+import { obtenerReservas } from '../redux/slices/reservasSlice';
 import QRCode from 'react-native-qrcode-svg';
 import { RootState } from '../redux/store';
 import { Reserva } from '../types/reserva';
 
 export default function MisBoletosScreen() {
+  const dispatch = useDispatch();
+  useFocusEffect(useCallback(() => { void (dispatch as any)(obtenerReservas()); }, [dispatch]));
   const reservas = useSelector((state: RootState) => state.reservas.reservas);
 
   const renderItem = ({ item }: { item: Reserva }) => (

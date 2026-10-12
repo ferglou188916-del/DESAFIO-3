@@ -3,7 +3,8 @@ import { Text, View, StyleSheet, Button, Alert, TouchableOpacity } from 'react-n
 import { Camera, CameraView } from 'expo-camera';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
-import { marcarBoletoUtilizado } from '../redux/slices/reservasSlice';
+import { obtenerReservas } from '../redux/slices/reservasSlice';
+import { validarReserva } from '../services/reservas';
 
 export default function EscanerScreen({ navigation }: any) {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -21,45 +22,19 @@ export default function EscanerScreen({ navigation }: any) {
     getCameraPermissions();
   }, []);
 
-  const manejarCodigoEscaneado = ({ type, data }: any) => {
+  const manejarCodigoEscaneado = async ({ data }: { data: string }) => {
     setScanned(true);
-    
-    const reserva = reservas.find(r => r.codigoReserva === data);
-
-    if (!reserva) {
-      Alert.alert(
-        'Boleto Inválido',
-        `El código ${data} no se encuentra registrado en el sistema.`,
-        [{ text: 'OK', onPress: () => setScanned(false) }]
-      );
-      return;
+    try {
+      const resultado = await validarReserva(data.trim());
+      await (dispatch as any)(obtenerReservas());
+      Alert.alert('Acceso permitido', `Boleto validado: ${resultado.codigo}`, [
+        { text: 'OK', onPress: () => setScanned(false) }
+      ]);
+    } catch (e) {
+      Alert.alert('Boleto rechazado', e instanceof Error ? e.message : 'No se pudo validar', [
+        { text: 'OK', onPress: () => setScanned(false) }
+      ]);
     }
-
-    if (reserva.estado === 'Utilizado') {
-      Alert.alert(
-        'Boleto ya utilizado',
-        `El código ${data} ya fue escaneado anteriormente.\nCliente: ${reserva.nombreCliente}`,
-        [{ text: 'OK', onPress: () => setScanned(false) }]
-      );
-      return;
-    }
-
-    if (reserva.estado === 'Cancelado') {
-      Alert.alert(
-        'Boleto Cancelado',
-        `Esta reserva fue cancelada y no es válida.`,
-        [{ text: 'OK', onPress: () => setScanned(false) }]
-      );
-      return;
-    }
-
-    dispatch(marcarBoletoUtilizado(data));
-    
-    Alert.alert(
-      'Acceso Permitido',
-      `Boleto válido.\n\nCliente: ${reserva.nombreCliente}\nPelícula: ${reserva.peliculaNombre}\nAsientos: ${reserva.asientos.join(', ')}\nSala: ${reserva.salaAsignada}`,
-      [{ text: 'OK', onPress: () => setScanned(false) }]
-    );
   };
 
   if (hasPermission === null) {

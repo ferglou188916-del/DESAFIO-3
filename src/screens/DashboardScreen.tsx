@@ -1,14 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert, FlatList } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
-import { actualizarClienteReserva, eliminarReserva, Reserva } from '../redux/slices/reservasSlice';
+import { obtenerSalas } from '../redux/slices/salasSlice';
+import { Reserva, obtenerReservas } from '../redux/slices/reservasSlice';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function DashboardScreen({ navigation }: any) {
   const peliculas = useSelector((state: RootState) => state.peliculas.peliculas);
   const reservas = useSelector((state: RootState) => state.reservas.reservas);
   const salas = useSelector((state: RootState) => state.salas.salas);
   const dispatch = useDispatch();
+  useFocusEffect(useCallback(() => { void (dispatch as any)(obtenerReservas()); void (dispatch as any)(obtenerSalas()); }, [dispatch]));
 
   // ESTADISTICAS DEL CINE
   const totalPeliculas = peliculas.length;
@@ -17,15 +20,13 @@ export default function DashboardScreen({ navigation }: any) {
   const totalBoletosVendidos = reservas.reduce((acc, reserva) => acc + reserva.cantidadBoletos, 0);
   const ingresosGenerados = reservas.reduce((acc, reserva) => acc + reserva.totalPagado, 0);
 
-  let totalAsientos = 0;
-  let asientosOcupados = 0;
-  
-  salas.forEach(sala => {
-    totalAsientos += sala.distribucion.length;
-    asientosOcupados += sala.distribucion.filter(a => a.estado === 'Ocupado').length;
-  });
-  
-  const asientosDisponibles = totalAsientos - asientosOcupados;
+  const funciones = peliculas.filter(p => p.estado === 'Disponible');
+  const totalAsientos = funciones.reduce((s,p) => s + (salas.find(a=>a.nombre.toUpperCase()===p.salaAsignada.toUpperCase())?.distribucion.length || 0), 0);
+  const asientosOcupados = funciones.reduce((s,p) => {
+    const funcion = `${p.salaAsignada}|${p.fecha}|${p.hora}`;
+    return s + reservas.filter(r => r.peliculaNombre === p.nombre && r.salaAsignada.toUpperCase() === p.salaAsignada.toUpperCase() && r.funcion.includes(`${p.fecha} a las ${p.hora}`)).reduce((n,r)=>n+r.asientos.length,0);
+  },0);
+  const asientosDisponibles = Math.max(0,totalAsientos - asientosOcupados);
 
   // Lógica para Película Más Reservada
   const conteoPeliculas: { [key: string]: number } = {};
@@ -62,28 +63,8 @@ export default function DashboardScreen({ navigation }: any) {
     setModalVisible(true);
   };
 
-  const guardarCambiosCliente = () => {
-    if (!editNombre.trim() || !editCorreo.trim()) return Alert.alert('Error', 'Campos vacíos.');
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(editCorreo.trim())) return Alert.alert('Error', 'Correo inválido.');
-
-    if (reservaActiva) {
-      dispatch(actualizarClienteReserva({
-        codigoReserva: reservaActiva.codigoReserva,
-        nuevoNombre: editNombre.trim(),
-        nuevoCorreo: editCorreo.trim()
-      }));
-      setModalVisible(false);
-      Alert.alert('Éxito', 'Datos actualizados.');
-    }
-  };
-
-  const confirmarEliminacion = (codigoReserva: string) => {
-    Alert.alert('Eliminar', '¿Borrar este boleto?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Borrar', style: 'destructive', onPress: () => dispatch(eliminarReserva(codigoReserva)) }
-    ]);
-  };
+  const guardarCambiosCliente = () => Alert.alert('No disponible', 'La API actual no permite editar reservas.');
+  const confirmarEliminacion = (_codigoReserva: string) => Alert.alert('No disponible', 'La API actual no permite eliminar reservas.');
 
   const funcionYaPaso = (funcionString: string) => {
     try {

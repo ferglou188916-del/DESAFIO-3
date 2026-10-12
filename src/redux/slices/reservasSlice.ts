@@ -1,7 +1,9 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { adaptarReserva, listarReservas } from '../../services/reservas';
 
 export interface Reserva {
   codigoReserva: string;
+  peliculaId?: number;
   peliculaNombre: string;
   funcion: string; // Formato esperado: "YYYY-MM-DD a las HH:MM"
   salaAsignada: string;
@@ -15,11 +17,19 @@ export interface Reserva {
 
 interface ReservasState {
   reservas: Reserva[];
+  loading: boolean;
+  error: string | null;
 }
 
 const initialState: ReservasState = {
-  reservas: []
+  reservas: [],
+  loading: false,
+  error: null
 };
+
+export const obtenerReservas = createAsyncThunk('reservas/obtener', async () =>
+  (await listarReservas()).map(adaptarReserva)
+);
 
 const reservasSlice = createSlice({
   name: 'reservas',
@@ -45,6 +55,11 @@ const reservasSlice = createSlice({
     eliminarReserva: (state, action: PayloadAction<string>) => {
       state.reservas = state.reservas.filter(r => r.codigoReserva !== action.payload);
     }
+  },
+  extraReducers: builder => {
+    builder.addCase(obtenerReservas.pending, state => { state.loading = true; state.error = null; });
+    builder.addCase(obtenerReservas.fulfilled, (state, action) => { state.loading = false; state.reservas = action.payload; });
+    builder.addCase(obtenerReservas.rejected, (state, action) => { state.loading = false; state.error = action.error.message || 'Error al consultar reservas'; });
   }
 });
 

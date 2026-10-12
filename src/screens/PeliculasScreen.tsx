@@ -1,9 +1,15 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, FlatList, Text, TouchableOpacity, Image, TextInput, ScrollView } from 'react-native';
-import { useSelector } from 'react-redux';
+import React, { useState, useCallback } from 'react';
+import { View, StyleSheet, FlatList, Text, TouchableOpacity, Image, TextInput, ScrollView, ActivityIndicator } from 'react-native';
+import { useSelector, useDispatch } from 'react-redux';
+import { useFocusEffect } from '@react-navigation/native';
+import { AppDispatch } from '../redux/store';
+import { obtenerPeliculas } from '../redux/slices/peliculasSlice';
 import { RootState } from '../redux/store';
 
 export default function PeliculasScreen({ navigation }: any) {
+  const dispatch = useDispatch<AppDispatch>();
+  const { loading, error } = useSelector((state: RootState) => state.peliculas);
+  useFocusEffect(useCallback(() => { void dispatch(obtenerPeliculas()); }, [dispatch]));
   const [busqueda, setBusqueda] = useState('');
   const [filtroGenero, setFiltroGenero] = useState('');
 
@@ -64,6 +70,10 @@ export default function PeliculasScreen({ navigation }: any) {
         </ScrollView>
       </View>
 
+      {loading && <ActivityIndicator color="#d32f2f" accessibilityLabel="Cargando cartelera" />}
+      {error && <TouchableOpacity onPress={() => { void dispatch(obtenerPeliculas()); }} style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+        <Text style={{ color: '#ffb4b4' }}>{error} Toca para reintentar.</Text>
+      </TouchableOpacity>}
       <FlatList
         data={peliculasFiltradas}
         keyExtractor={item => item.codigo}

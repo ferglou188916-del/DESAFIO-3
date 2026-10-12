@@ -1,14 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, ScrollView, Alert } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
-import { RootState } from '../redux/store';
-import { agregarPelicula, editarPelicula, eliminarPelicula } from '../redux/slices/peliculasSlice';
-import { Pelicula } from '../types/pelicula';
+import { useFocusEffect } from '@react-navigation/native';
+import { RootState, AppDispatch } from '../redux/store';
+import { obtenerPeliculas } from '../redux/slices/peliculasSlice';
+import { apiFetch } from '../services/api';
+import { Pelicula, PeliculaApi } from '../types/pelicula';
 
 export default function PersonalScreen({ navigation }: any) {
   const peliculas = useSelector((state: RootState) => state.peliculas.peliculas);
   const salasDisponibles = useSelector((state: RootState) => state.salas.salas);
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
+  const [guardando, setGuardando] = useState(false);
+  useFocusEffect(useCallback(() => { void dispatch(obtenerPeliculas()); }, [dispatch]));
 
   const [modalVisible, setModalVisible] = useState(false);
   const [modoEdicion, setModoEdicion] = useState(false);
@@ -65,58 +69,77 @@ export default function PersonalScreen({ navigation }: any) {
     setModalVisible(true);
   };
 
-  const guardarPelicula = () => {
-    if (!nombre || !genero || !duracion || !clasificacion || !precio || !imagenUrl || !fecha || !hora) {
-      Alert.alert('Error', 'Completa todos los campos obligatorios.');
+  const guardarPelicula = async () => {
+    if (guardando) return;
+    if (!nombre.trim() || !genero.trim() || !duracion.trim() || !clasificacion.trim() || !precio.trim() || !fecha.trim() || !hora.trim()) {
+      Alert.alert('Error', 'Completa los campos obligatorios. La URL del póster es opcional.');
       return;
     }
 
     const regexFecha = /^\d{4}-\d{2}-\d{2}$/;
     const regexHora = /^([01]\d|2[0-3]):([0-5]\d)$/;
-    
     if (!regexFecha.test(fecha) || !regexHora.test(hora)) {
-      Alert.alert('Formato Inválido', 'Usa AAAA-MM-DD para la fecha y HH:MM para la hora (24h).');
+      Alert.alert('Formato inválido', 'Usa AAAA-MM-DD para fecha y HH:MM para hora.');
       return;
     }
-
-    if (parseFloat(precio) < 0) {
-      Alert.alert('Error', 'El precio no puede ser negativo.');
+    const duracionNumero = Number(duracion);
+    const precioNumero = Number(precio.replace(',', '.'));
+    if (!Number.isInteger(duracionNumero) || duracionNumero <= 0 || !Number.isFinite(precioNumero) || precioNumero < 0) {
+      Alert.alert('Error', 'Ingresa una duración válida y un precio no negativo.');
       return;
     }
-
-    const conflicto = peliculas.find(
-      (p) => 
-        p.salaAsignada === salaAsignada && 
-        p.fecha === fecha &&
-        p.hora === hora &&
-        p.estado === 'Disponible' &&
-        p.codigo !== codigo 
-    );
-
+    const urlLimpia = imagenUrl.trim();
+    if (urlLimpia && !/^https?:\/\//i.test(urlLimpia)) {
+      Alert.alert('URL inválida', 'El póster debe tener una dirección completa que empiece por https:// o http://');
+      return;
+    }
+    const conflicto = peliculas.find(p => p.salaAsignada === salaAsignada && p.fecha === fecha && p.hora === hora && p.estado === 'Disponible' && p.codigo !== codigo);
     if (conflicto && estado === 'Disponible') {
-      Alert.alert(
-        'Conflicto de Horario',
-        `La ${salaAsignada} ya tiene programada "${conflicto.nombre}" el ${fecha} a las ${hora}.`
-      );
+      Alert.alert('Conflicto de horario', `La ${salaAsignada} ya tiene programada "${conflicto.nombre}" el ${fecha} a las ${hora}.`);
       return;
     }
-
-    const nuevaPelicula: Pelicula = {
-      codigo, nombre: nombre.trim(), genero, duracion: parseInt(duracion),
-      clasificacion, salaAsignada, precio: parseFloat(precio), estado, imagenUrl,
-      fecha, hora
+    const actual = peliculas.find(p => p.codigo === codigo);
+    if (modoEdicion && actual?.id == null) {
+      Alert.alert('Error', 'No se encontró el ID de esta película en el servidor. Actualiza la cartelera.');
+      return;
+    }
+    const datos = {
+      codigo, nombre: nombre.trim(), genero: genero.trim(), duracion: duracionNumero,
+      clasificacion: clasificacion.trim(), sala: salaAsignada, precio: precioNumero,
+      estado, imagenUrl: urlLimpia, fecha, hora,
     };
-
-    if (modoEdicion) dispatch(editarPelicula(nuevaPelicula));
-    else dispatch(agregarPelicula(nuevaPelicula));
-    
-    setModalVisible(false);
+    setGuardando(true);
+    try {
+      if (modoEdicion) {
+        await apiFetch<PeliculaApi>(`/peliculas/${actual!.id}`, { method: 'PUT', body: JSON.stringify(datos) });
+      } else {
+        await apiFetch<PeliculaApi>('/peliculas', { method: 'POST', body: JSON.stringify(datos) });
+      }
+      await dispatch(obtenerPeliculas()).unwrap();
+      setModalVisible(false);
+      Alert.alert('Guardado', 'Los cambios se guardaron en la base de datos.');
+    } catch (error) {
+      Alert.alert('No se pudo guardar', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    } finally {
+      setGuardando(false);
+    }
   };
 
-  const confirmarEliminacion = (codigoPelicula: string) => {
-    Alert.alert('Confirmar', '¿Estás seguro de borrar esta función?', [
+  const confirmarEliminacion = (pelicula: Pelicula) => {
+    Alert.alert('Confirmar', `¿Estás seguro de borrar "${pelicula.nombre}"?`, [
       { text: 'Cancelar', style: 'cancel' },
-      { text: 'Eliminar', style: 'destructive', onPress: () => dispatch(eliminarPelicula(codigoPelicula)) }
+      { text: 'Eliminar', style: 'destructive', onPress: async () => {
+        if (pelicula.id == null) {
+          Alert.alert('Error', 'No se encontró el ID de la película.');
+          return;
+        }
+        try {
+          await apiFetch(`/peliculas/${pelicula.id}`, { method: 'DELETE' });
+          await dispatch(obtenerPeliculas()).unwrap();
+        } catch (error) {
+          Alert.alert('No se pudo eliminar', error instanceof Error ? error.message : 'Intenta nuevamente.');
+        }
+      } },
     ]);
   };
 
@@ -128,7 +151,7 @@ export default function PersonalScreen({ navigation }: any) {
       </View>
       <View style={styles.acciones}>
         <TouchableOpacity style={styles.botonEditar} onPress={() => abrirModalEditar(item)}><Text style={styles.textoAccion}>EDITAR</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.botonEliminar} onPress={() => confirmarEliminacion(item.codigo)}><Text style={styles.textoAccion}>BORRAR</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.botonEliminar} onPress={() => confirmarEliminacion(item)}><Text style={styles.textoAccion}>BORRAR</Text></TouchableOpacity>
       </View>
     </View>
   );
@@ -167,7 +190,7 @@ export default function PersonalScreen({ navigation }: any) {
               <TextInput style={styles.input} placeholderTextColor="#555" placeholder="Ej: Matrix" value={nombre} onChangeText={setNombre} />
               
               <Text style={styles.labelFormulario}>URL del Póster</Text>
-              <TextInput style={styles.input} placeholderTextColor="#555" value={imagenUrl} onChangeText={setImagenUrl} autoCapitalize="none" />
+              <TextInput style={styles.input} placeholder="https://sitio.com/poster.jpg (opcional)" placeholderTextColor="#555" value={imagenUrl} onChangeText={setImagenUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" />
               
               <View style={styles.filaFormulario}>
                 <View style={{ flex: 1, marginRight: 8 }}>
@@ -223,7 +246,7 @@ export default function PersonalScreen({ navigation }: any) {
 
             <View style={styles.modalBotones}>
               <TouchableOpacity style={styles.botonCancelarModal} onPress={() => setModalVisible(false)}><Text style={styles.textoBotonCancelar}>CANCELAR</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.botonGuardarModal} onPress={guardarPelicula}><Text style={styles.textoBotonGuardar}>GUARDAR</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.botonGuardarModal} onPress={() => { void guardarPelicula(); }} disabled={guardando}><Text style={styles.textoBotonGuardar}>{guardando ? "GUARDANDO..." : "GUARDAR"}</Text></TouchableOpacity>
             </View>
           </View>
         </View>

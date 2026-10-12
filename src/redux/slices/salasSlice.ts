@@ -1,4 +1,5 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { listarSalas } from '../../services/salas';
 
 export interface Asiento {
   id: string;
@@ -8,6 +9,7 @@ export interface Asiento {
 export interface Sala {
   nombre: string;
   distribucion: Asiento[];
+  id?: number;
 }
 
 interface SalasState {
@@ -18,6 +20,7 @@ const initialState: SalasState = {
   salas: []
 };
 
+export const obtenerSalas = createAsyncThunk('salas/obtener', async () => await listarSalas());
 const salasSlice = createSlice({
   name: 'salas',
   initialState,
@@ -59,6 +62,17 @@ const salasSlice = createSlice({
         });
       }
     }
+  },
+  extraReducers: builder => {
+    builder.addCase(obtenerSalas.fulfilled, (state, action) => {
+      state.salas = action.payload.map(s => ({
+        id:s.id, nombre:s.nombre,
+        distribucion:Array.from({length:s.filas * 5}, (_,i) => ({
+          id:`${'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(i / 5)]}${i % 5 + 1}`,
+          estado:'Disponible' as const
+        }))
+      }));
+    });
   }
 });
 

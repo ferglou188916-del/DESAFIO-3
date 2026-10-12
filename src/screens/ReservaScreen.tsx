@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput } from 'react-native';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../redux/store';
 import { Pelicula } from '../types/pelicula';
-import { ocuparAsientos } from '../redux/slices/salasSlice';
-import { agregarReserva } from '../redux/slices/reservasSlice';
+import { obtenerSalas } from '../redux/slices/salasSlice';
+import { obtenerReservas } from '../redux/slices/reservasSlice';
+import { consultarOcupados, crearReserva } from '../services/reservas';
+import { USUARIO_GENERICO_ID } from '../config';
+import { notificarCompraConfirmada } from '../services/notificaciones';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function ReservaScreen({ route, navigation }: any) {
   const { pelicula } = route.params as { pelicula: Pelicula };
@@ -14,11 +18,25 @@ export default function ReservaScreen({ route, navigation }: any) {
     state.salas.salas.find(s => s.nombre === pelicula.salaAsignada)
   );
 
+  const [ocupados, setOcupados] = useState<string[]>([]);
+  const [guardando, setGuardando] = useState(false);
   const [cantidadBoletos, setCantidadBoletos] = useState(1);
   const [asientosSeleccionados, setAsientosSeleccionados] = useState<string[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [nombreCliente, setNombreCliente] = useState('');
   const [correoCliente, setCorreoCliente] = useState('');
+
+  const funcionApi = `${pelicula.salaAsignada}|${pelicula.fecha}|${pelicula.hora}`;
+  const cargarOcupados = async () => {
+    if (!pelicula.id) return;
+    try {
+      const datos = await consultarOcupados(pelicula.id, funcionApi);
+      const bloqueados = datos.flatMap(r => Array.isArray(r.asientos) ? r.asientos : String(r.asientos).split(','));
+      setOcupados(bloqueados);
+      setAsientosSeleccionados(actual => actual.filter(a => !bloqueados.includes(a)));
+    } catch (e) { Alert.alert('Error', e instanceof Error ? e.message : 'No se pudieron cargar los asientos'); }
+  };
+  useFocusEffect(useCallback(() => { void (dispatch as any)(obtenerSalas()); void cargarOcupados(); }, [pelicula.id, funcionApi, dispatch]));
 
   if (!sala) return <View style={styles.contenedor}><Text style={styles.textoBlanco}>Sala no encontrada</Text></View>;
 
@@ -36,7 +54,10 @@ export default function ReservaScreen({ route, navigation }: any) {
 
   const totalPagado = cantidadBoletos * pelicula.precio;
 
-  const procesarPago = () => {
+  const procesarPago = async () => {
+    if (guardando) return;
+    if (!pelicula.id) { Alert.alert("Error", "Esta película no tiene ID en Railway."); return; }
+    if (asientosSeleccionados.length !== cantidadBoletos) { Alert.alert("Error", "Selecciona todos los asientos."); return; }
     if (!nombreCliente.trim() || !correoCliente.trim()) {
       Alert.alert('Error', 'Por favor ingresa tu nombre y correo.');
       return;
@@ -49,32 +70,39 @@ export default function ReservaScreen({ route, navigation }: any) {
       return;
     }
 
-    const codigoGenerado = Math.random().toString(36).substring(2, 10).toUpperCase();
-
-    dispatch(agregarReserva({
-      codigoReserva: codigoGenerado,
-      peliculaNombre: pelicula.nombre,
-      funcion: `${pelicula.fecha} a las ${pelicula.hora}`,
-      salaAsignada: pelicula.salaAsignada,
-      asientos: asientosSeleccionados,
-      cantidadBoletos: cantidadBoletos,
-      totalPagado: totalPagado,
-      nombreCliente: nombreCliente.trim(),
-      correoCliente: correoCliente.trim(),
-      estado: 'Válido'
-    }));
-
-    dispatch(ocuparAsientos({
-      salaNombre: sala.nombre,
-      asientosIds: asientosSeleccionados
-    }));
-
-    setModalVisible(false);
-    setNombreCliente('');
-    setCorreoCliente('');
-    Alert.alert('Compra Exitosa', 'Tus boletos han sido reservados.', [
-      { text: 'Ver mis boletos', onPress: () => navigation.navigate('Mis Boletos') }
-    ]);
+    setGuardando(true);
+    try {
+      const resultado = await crearReserva({
+        usuario_id: USUARIO_GENERICO_ID,
+        pelicula_id: pelicula.id,
+        nombre_cliente: nombreCliente.trim(),
+        funcion: funcionApi,
+        asientos: asientosSeleccionados.join(','),
+        cantidad: cantidadBoletos,
+        total: totalPagado,
+      });
+      void notificarCompraConfirmada({
+        pelicula: pelicula.nombre,
+        cantidad: cantidadBoletos,
+        total: totalPagado,
+        codigo: resultado.codigo,
+      });
+      try {
+        await (dispatch as any)(obtenerReservas());
+        await cargarOcupados();
+      } catch (error) {
+        console.warn('Compra guardada; no se pudo actualizar la vista:', error);
+      }
+      setModalVisible(false);
+      setNombreCliente('');
+      setCorreoCliente('');
+      Alert.alert('Compra registrada en Railway', `Código: ${resultado.codigo}`, [
+        { text: 'Ver mis boletos', onPress: () => navigation.navigate('Mis Boletos') }
+      ]);
+    } catch (e) {
+      Alert.alert('No se registró la compra', e instanceof Error ? e.message : 'Error del servidor');
+      await cargarOcupados();
+    } finally { setGuardando(false); }
   };
 
   return (
@@ -108,7 +136,7 @@ export default function ReservaScreen({ route, navigation }: any) {
               <Text style={styles.letraFila}>{filaLetra}</Text>
               {sala.distribucion.filter(a => a.id.charAt(0) === filaLetra).map(asiento => {
                 const isSeleccionado = asientosSeleccionados.includes(asiento.id);
-                const isOcupado = asiento.estado === 'Ocupado';
+                const isOcupado = ocupados.includes(asiento.id);
 
                 return (
                   <TouchableOpacity
@@ -151,7 +179,7 @@ export default function ReservaScreen({ route, navigation }: any) {
             <TextInput style={styles.input} placeholder="Tu Correo" placeholderTextColor="#888" keyboardType="email-address" autoCapitalize="none" value={correoCliente} onChangeText={setCorreoCliente} />
             <View style={styles.modalBotones}>
               <TouchableOpacity style={styles.botonCancelarModal} onPress={() => setModalVisible(false)}><Text style={styles.textoBotonCancelar}>CANCELAR</Text></TouchableOpacity>
-              <TouchableOpacity style={styles.botonGuardarModal} onPress={procesarPago}><Text style={styles.textoBotonGuardar}>CONFIRMAR</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.botonGuardarModal} onPress={procesarPago} disabled={guardando}><Text style={styles.textoBotonGuardar}>{guardando ? "GUARDANDO..." : "CONFIRMAR"}</Text></TouchableOpacity>
             </View>
           </View>
         </View>
